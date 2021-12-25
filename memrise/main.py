@@ -18,7 +18,7 @@ _SO_SERVICE_URL = 'https://isolve-so-service.appspot.com/pronounce'
 
 def run(input, output):
     words = []
-    queries = pd.read_csv(input, names=['query'])['query']
+    queries = pd.read_csv(input, names=['Query'])['Query']
     for query in queries:
         print('Slår upp ordet {}...'.format(query))
         word = {**_read_so(query), **_read_fl(query)}
@@ -30,9 +30,10 @@ def run(input, output):
         path = Path(output) / category
         path.mkdir(parents=True, exist_ok=True)
         chunk = words[words['Category'] == category]
-        chunk[_COLUMNS[:-1]].to_csv(path / 'lista.csv')
+        chunk.index.to_series().to_csv(path / '_index.csv', index=False)
+        chunk[_COLUMNS[:-1]].to_csv(path / '_import.csv', index=False)
         for query, word in chunk[~chunk['Audio'].isnull()].iterrows():
-            print('Laddar ner ser ljudet {}...'.format(query))
+            print('Laddar ner ljudet {}...'.format(query))
             with requests.get(word['Audio'], stream=True) as response:
                 with open(path / (query + '.mp3'), 'wb') as file:
                     shutil.copyfileobj(response.raw, file)
