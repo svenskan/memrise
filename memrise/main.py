@@ -4,7 +4,13 @@ import json
 import pandas as pd
 import re
 import requests
+import shutil
 
+from pathlib import Path
+
+_COLUMNS = [
+    'Swedish', 'English', 'Definition', 'Category', 'Pronunciation', 'Audio'
+]
 _FL_URL = 'http://folkets-lexikon.csc.kth.se/folkets/service'
 _SO_URL = 'https://svenska.se/so'
 _SO_SERVICE_URL = 'https://isolve-so-service.appspot.com/pronounce'
@@ -14,15 +20,22 @@ def run(input, output):
     words = []
     queries = pd.read_csv(input, names=['query'])['query']
     for query in queries:
-        print(query)
+        print('Slår upp ordet {}...'.format(query))
         word = {**_read_so(query), **_read_fl(query)}
         print(json.dumps(word, ensure_ascii=False, indent=2))
         words.append(word)
-    words = pd.DataFrame(words, index=queries)
-    words = words[ \
-        ['Swedish', 'English', 'Definition', 'Category', 'Pronunciation']
-    ]
-    words.to_csv(output)
+    words = pd.DataFrame(data=words, columns=_COLUMNS, index=queries)
+    words['Category'].fillna('okänd', inplace=True)
+    for category in sorted(words['Category'].unique()):
+        path = Path(output) / category
+        path.mkdir(parents=True, exist_ok=True)
+        chunk = words[words['Category'] == category]
+        chunk[_COLUMNS[:-1]].to_csv(path / 'lista.csv')
+        for query, word in chunk[~chunk['Audio'].isnull()].iterrows():
+            print('Laddar ner ser ljudet {}...'.format(query))
+            with requests.get(word['Audio'], stream=True) as response:
+                with open(path / (query + '.mp3'), 'wb') as file:
+                    shutil.copyfileobj(response.raw, file)
 
 
 def _read_fl(query):
@@ -49,12 +62,10 @@ def _read_fl(query):
             if element['alt'] == '(Engelska)':
                 key = 'English'
                 continue
-        if key == 'Swedish':
-            match = re.match('\s*(.+),\s*', element.text)
+        if key and not 'Category' in word:
+            match = re.match('\s*(\w+).*', element.text)
             if match:
-                value = match.group(1).split(' ')[0]
-                if value:
-                    word['Category'] = value
+                word['Category'] = match.group(1)
                 continue
         if not key:
             match = re.match('Uttal:\s*(\[.*\])\s*', element.text)
@@ -71,13 +82,15 @@ def _read_so(query):
                             headers={'User-Agent': 'curl/7.77.0'})
     soup = bs4.BeautifulSoup(response.text, 'html.parser')
     element = soup.find('div', {'class': 'lemmalista'})
-    element_ = element.find('div', {'class': 'ordklass'}) if element else None
+    if not element:
+        return word
+    element_ = element.find('div', {'class': 'ordklass'})
     if element_:
         word['Category'] = element_.text
-    element_ = element.find('span', {'class': 'def'}) if element else None
+    element_ = element.find('span', {'class': 'def'})
     if element_:
         word['Definition'] = element_.text.replace('\n', '')
-    element_ = element.find('a', {'class': 'ljudfil'}) if element else None
+    element_ = element.find('a', {'class': 'ljudfil'})
     if element_:
         match = re.match("playAudioForLemma\('(.+)'\);", element_['onclick'])
         if match:
