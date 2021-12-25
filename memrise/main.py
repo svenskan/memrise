@@ -85,6 +85,9 @@ def _read_so(query):
     element = soup.find('div', {'class': 'lemmalista'})
     if not element:
         return word
+    element_ = element.find('span', {'class': 'orto'})
+    if element_:
+        word['Swedish'] = element_.text
     element_ = element.find('div', {'class': 'ordklass'})
     if element_:
         word['Category'] = element_.text
