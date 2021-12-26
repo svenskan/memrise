@@ -1,5 +1,4 @@
 import argparse
-import bs4
 import json
 import pandas as pd
 import re
@@ -7,6 +6,7 @@ import requests
 import shutil
 
 from pathlib import Path
+from pyquery import PyQuery as Element
 
 _COLUMNS = [
     'Swedish', 'English', 'Definition', 'Category', 'Pronunciation', 'Audio'
@@ -40,69 +40,70 @@ def run(input, output):
 
 
 def _read_fl(query):
-    word = {}
+    words = []
     response = requests.get(_FL_URL, params=dict(word=query))
-    soup = bs4.BeautifulSoup(response.text, 'html.parser')
-    element, key = soup.find('p'), None
-    for element in (element.children if element else []):
-        if element.name == 'a':
-            if element.get('title') == 'Ladda ner uttalet':
-                word['Audio'] = element['href']
-                continue
-        if element.name == 'b' and key:
-            value = element.text.replace('|', '')
-            word[key] = word[key] + ', ' + value if key in word else value
+    element = Element(response.text)
+    for element in element.find('body > p'):
+        word = {}
+        element = Element(element)
+        elements = element.find('img:first')
+        if not elements or elements[0].get('alt') == '(Engelska)':
             continue
-        if element.name == 'br':
-            key = None
-            continue
-        if element.name == 'img':
-            if element['alt'] == '(Svenska)':
-                key = 'Swedish'
-                continue
-            if element['alt'] == '(Engelska)':
-                key = 'English'
-                continue
-        if key and not 'Category' in word:
-            match = re.match('\s*(\w+).*', element.text)
+        elements = element.find('img[alt="(Svenska)"] + b')
+        if elements:
+            match = re.match('.*</b> (\w+),.*', str(elements))
             if match:
                 word['Category'] = match.group(1)
-                continue
-        if not key:
-            match = re.match('Uttal:\s*(\[.*\])\s*', element.text)
-            if match:
-                word['Pronunciation'] = match.group(1)
-                continue
-    return word
+            elements = map(lambda element: element.text, elements)
+            word['Swedish'] = ', '.join(elements).replace('|', '')
+        elements = element.find('img[alt="(Engelska)"] ~ b')
+        if elements:
+            elements = map(lambda element: element.text, elements)
+            word['English'] = ', '.join(elements)
+        elements = element.find('a[title="Ladda ner uttalet"]')
+        if elements:
+            word['Audio'] = elements[0].get('href')
+        match = re.match('.*Uttal: (\[[^\[\]]+\]).*', element.outerHtml())
+        if match:
+            word['Pronunciation'] = match.group(1)
+        words.append(word)
+    if not words:
+        return {}
+    distances = [
+        abs(len(word.get('Swedish', '')) - len(query)) for word in words
+    ]
+    return words[distances.index(min(distances))]
 
 
 def _read_so(query):
-    word = {}
+    words = []
     response = requests.get(_SO_URL,
                             params=dict(sok=query),
                             headers={'User-Agent': 'curl/7.77.0'})
-    soup = bs4.BeautifulSoup(response.text, 'html.parser')
-    element = soup.find('div', {'class': 'lemmalista'})
-    if not element:
-        return word
-    element_ = element.find('span', {'class': 'orto'})
-    if element_:
-        word['Swedish'] = element_.text
-    element_ = element.find('div', {'class': 'ordklass'})
-    if element_:
-        word['Category'] = element_.text
-    element_ = element.find('span', {'class': 'def'})
-    if element_:
-        word['Definition'] = element_.text \
-            .replace('\u00ad', '') \
-            .replace('\n', '')
-    element_ = element.find('a', {'class': 'ljudfil'})
-    if element_:
-        match = re.match("playAudioForLemma\('(.+)'\);", element_['onclick'])
-        if match:
-            word['Audio'] = \
-                _SO_SERVICE_URL + '?id={}.mp3'.format(match.group(1))
-    return word
+    element = Element(response.text)
+    for element in element.find('div.lemmalista'):
+        word = {}
+        element = Element(element)
+        elements = element.find('span.orto')
+        if elements:
+            word['Swedish'] = elements[0].text
+        elements = element.find('div.ordklass')
+        if elements:
+            word['Category'] = elements[0].text
+        elements = element.find('span.def')
+        if elements:
+            word['Definition'] = Element(elements[0]).text() \
+                .replace('\u00ad', '') \
+                .replace('\n', '')
+        elements = element.find('a.ljudfil')
+        if elements:
+            match = re.match("playAudioForLemma\('(.+)'\);",
+                             elements[0].get('onclick'))
+            if match:
+                word['Audio'] = \
+                    _SO_SERVICE_URL + '?id={}.mp3'.format(match.group(1))
+        words.append(word)
+    return next(iter(words), {})
 
 
 if __name__ == '__main__':
