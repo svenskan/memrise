@@ -93,7 +93,9 @@ def _read_so(query):
         word['Category'] = element_.text
     element_ = element.find('span', {'class': 'def'})
     if element_:
-        word['Definition'] = element_.text.replace('\n', '')
+        word['Definition'] = element_.text \
+            .replace('\u00ad', '') \
+            .replace('\n', '')
     element_ = element.find('a', {'class': 'ljudfil'})
     if element_:
         match = re.match("playAudioForLemma\('(.+)'\);", element_['onclick'])
