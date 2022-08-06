@@ -47,8 +47,8 @@ def run(input, output):
 def _read_fl(query):
     words = []
     response = requests.get(_FL_URL, params=dict(word=query))
-    element = Element(response.text)
-    for element in element.find("body > p"):
+    page = Element(response.text)
+    for element in page.find("body > p"):
         word = {}
         element = Element(element)
         elements = element.find("img:first")
@@ -85,8 +85,19 @@ def _read_so(query):
         params=dict(sok=query),
         headers={"User-Agent": "curl/7.77.0"},
     )
-    element = Element(response.text)
-    for element in element.find("div.lemmalista"):
+    page = Element(response.text)
+    for element in page.find("div.cshow a.slank"):
+        if any(map(lambda text: text == query, element.text_content().split(" "))):
+            match = re.match(".*id=(\d+).*", element.get("href"))
+            if match:
+                response = requests.get(
+                    _SO_URL,
+                    params=dict(id=match.group(1)),
+                    headers={"User-Agent": "curl/7.77.0"},
+                )
+                page = Element(response.text)
+                break
+    for element in page.find("div.lemmalista"):
         word = {}
         element = Element(element)
         elements = element.find("span.orto")
